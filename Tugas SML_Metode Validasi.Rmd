@@ -1,0 +1,310 @@
+---
+title: "Tugas SML_Metode Validasi"
+author: "Umi Makhmudah (3338240037)"
+date: "2026-05-30"
+output:
+  html_document: default
+  word_document: default
+---
+
+```{r}
+library(readxl)
+library(cluster)
+library(factoextra)
+library(fpc)
+
+data <- read.csv("C:/Users/Mima/Downloads/Wholesale customers data.csv")
+
+str(data)
+summary(data)
+
+colSums(is.na(data))
+```
+
+## Pemilihan Variabel
+
+```{r}
+data_clust <- data[, c("Fresh",
+                       "Milk",
+                       "Grocery",
+                       "Frozen",
+                       "Detergents_Paper",
+                       "Delicassen")]
+```
+
+Dipilih 6 variabel: Fresh, Milk, Grocery, Frozen, Detergents_Paper, Delicassen
+
+Channel dan Region dikeluarkan karena bersifat kategorikal (bukan mengukur jumlah belanja). Keenam variabel yang dipilih semuanya merepresentasikan volume pembelian per kategori produk, sehingga cocok untuk mengelompokkan pelanggan berdasarkan kesamaan pola belanja.
+
+## Standardisasi Data
+
+```{r}
+data_scale <- scale(data_clust)
+
+summary(data_scale)
+```
+
+## Menentukan Jumlah Cluster Optimal
+
+### Elbow Method
+
+Nilai WCSS:
+
+```{r}
+set.seed(123)
+
+wcss <- numeric(10)
+
+for(i in 1:10){
+
+  km <- kmeans(data_scale,
+               centers = i,
+               nstart = 25)
+
+  wcss[i] <- km$tot.withinss
+
+}
+
+data.frame(
+  Cluster = 1:10,
+  WCSS = wcss
+)
+```
+
+WCSS (Within-Cluster Sum of Squares) dihitung untuk k = 1 sampai 10. Penurunan paling tajam terjadi dari k=1 (WCSS = 2634) ke k=2 (WCSS = 1949). Setelah itu kurva melandai secara gradual. Titik siku (elbow) jelas ada di k = 2, sehingga digunakan sebagai jumlah cluster optimal.
+
+Grafik:
+
+```{r}
+plot(1:10,
+     wcss,
+     type = "b",
+     xlab = "Jumlah Cluster",
+     ylab = "WCSS",
+     main = "Metode Elbow")
+```
+
+
+Hasil k optimal:
+
+```{r}
+k_optimal <- 2
+```
+
+# Clustering K-Means
+
+```{r}
+set.seed(123)
+
+kmeans_final <- kmeans(data_scale,
+                       centers = k_optimal,
+                       nstart = 25)
+
+kmeans_final
+
+table(kmeans_final$cluster)
+```
+
+Hasil K-Means membagi 440 pelanggan menjadi 2 cluster. Cluster 1 (41 pelanggan) adalah kelompok pelanggan dengan belanja sangat tinggi terutama di Milk, Grocery, dan Detergents_Paper, ketiganya berada jauh di atas rata-rata pelanggan lain. Sementara Cluster 2 (399 pelanggan) adalah pelanggan reguler yang belanjanya biasa saja di semua kategori, tidak ada yang menonjol.
+
+Nilai between_SS/total_SS sebesar $26%$ menunjukkan bahwa kedua cluster belum terpisah secara bersih, masih banyak pelanggan yang karakteristiknya mirip satu sama lain sehingga batas antar kelompok tidak terlalu tegas.
+
+## Visualisasi K-Means
+
+```{r}
+fviz_cluster(kmeans_final,
+             data = data_scale)
+```
+
+## Validasi Silhouette K-Means
+
+```{r}
+sil_kmeans <- silhouette(
+  kmeans_final$cluster,
+  dist(data_scale)
+)
+
+
+mean(sil_kmeans[,3])
+```
+
+Nilai 0.591 masuk kategori cukup baik. Sebagian besar pelanggan sudah ditempatkan di cluster yang tepat, namun ada sejumlah observasi yang posisinya ambigu, bisa jadi berada di batas antara dua cluster.
+
+## Validasi Bootstrap K-Means
+
+```{r}
+set.seed(123)
+
+boot_kmeans <- clusterboot(
+  data_scale,
+  B = 100,
+  clustermethod = kmeansCBI,
+  k = k_optimal
+)
+
+boot_kmeans
+boot_kmeans$bootmean
+```
+
+Cluster 1 (Jaccard = 0.945) → sangat stabil. Dalam 100 kali bootstrap, cluster ini tidak pernah hilang (dissolved = 0) dan 97 kali berhasil terbentuk kembali. Artinya 41 pelanggan di cluster ini memang punya pola belanja yang sangat mirip satu sama lain.
+
+Cluster 2 (Jaccard = 0.642) → kurang stabil. Sebanyak 28 kali cluster ini hilang dan hanya 41 kali berhasil terbentuk kembali dari 100 iterasi. Artinya 399 pelanggan di cluster ini kemiripannya tidak sekuat Cluster 1.
+
+# Hierarchical Clustering
+
+## Menghitung Matriks Jarak
+
+
+```{r}
+dist_data <- dist(data_scale, method = "manhattan")
+```
+
+## Membentuk Dendrogram
+
+```{r}
+hc_complete <- hclust(
+  dist_data,
+  method = "complete"
+)
+
+plot(hc_complete,
+     main = "Dendrogram Complete Linkage",
+     xlab = "",
+     sub = "")
+```
+
+## Membentuk Cluster
+
+Karena hasil sebelumnya menunjukkan:
+
+```{r}
+k_optimal <- 2
+```
+
+maka:
+
+```{r}
+cluster_complete <- cutree(
+  hc_complete,
+  k = k_optimal
+)
+
+table(cluster_complete)
+```
+
+Ketika dendrogram dipotong pada k = 2, hasilnya sangat tidak seimbang: 439 observasi berada pada satu cluster dan hanya 1 observasi pada cluster lainnya. Hal ini menunjukkan bahwa Complete Linkage mengidentifikasi satu titik ekstrem (outlier) yang sangat berbeda dari observasi lainnya sehingga dipisahkan menjadi cluster tersendiri.
+
+Menampilkan Batas Cluster pada Dendrogram
+
+```{r}
+plot(hc_complete,
+     main = "Dendrogram Complete Linkage")
+
+rect.hclust(
+  hc_complete,
+  k = k_optimal,
+  border = 2:5
+)
+```
+
+
+## Validasi Silhouette Hierarchical
+
+```{r}
+sil_complete <- silhouette(
+  cluster_complete,
+  dist_data
+)
+
+mean(sil_complete[,3])
+```
+
+Nilai silhouette yang sangat tinggi ini pada awalnya terlihat menunjukkan kualitas clustering yang sangat baik. Namun, interpretasi ini perlu ditinjau lebih hati-hati.
+
+Pada hasil clustering, salah satu cluster hanya berisi 1 observasi. Dalam kondisi seperti ini, nilai silhouette untuk observasi tersebut secara otomatis mendekati 1 karena tidak ada anggota lain dalam cluster yang sama untuk dibandingkan.
+
+Akibatnya, rata-rata silhouette menjadi terinflasi (artificially high) dan tidak sepenuhnya mencerminkan kualitas segmentasi secara nyata. Oleh karena itu, nilai ini tidak dapat dijadikan satu-satunya ukuran kualitas clustering.
+
+## Validasi Bootstrap Hierarchical
+
+```{r}
+set.seed(123)
+
+boot_complete <- clusterboot(
+  data_scale,
+  B = 100,
+  clustermethod = hclustCBI,
+  method = "complete",
+  k = k_optimal
+)
+
+boot_complete
+boot_complete$bootmean
+```
+
+Cluster 1 (Jaccard 0.9939) sangat stabil karena hampir seluruh data selalu kembali membentuk cluster yang sama pada setiap bootstrap iterasi (recovered 100/100).
+
+Cluster 2 (Jaccard 0.6050) kurang stabil karena sering “hilang” (dissolved 44 kali). Hal ini terjadi karena cluster hanya berisi 1 observasi sehingga sangat sensitif terhadap perubahan sampel bootstrap.
+
+## Perbandingan Metode Clustering
+
+
+### Perbandingan Nilai Silhouette
+
+```{r}
+data.frame(
+  Metode = c("K-Means",
+             "Hierarchical Complete"),
+  Silhouette = c(
+    mean(sil_kmeans[,3]),
+    mean(sil_complete[,3])
+  )
+)
+```
+
+Secara numerik, Hierarchical Complete terlihat lebih unggul. Namun, nilai tersebut bersifat bias karena distribusi cluster yang ekstrem (439 vs 1), sehingga tidak mencerminkan segmentasi yang seimbang.
+
+### Perbandingan Nilai Bootstrap
+
+```{r}
+data.frame(
+  Metode = c("K-Means",
+             "Hierarchical Complete"),
+  Cluster1 = c(
+    boot_kmeans$bootmean[1],
+    boot_complete$bootmean[1]
+  ),
+  Cluster2 = c(
+    boot_kmeans$bootmean[2],
+    boot_complete$bootmean[2]
+  )
+)
+```
+
+Cluster 1 pada kedua metode menunjukkan stabilitas yang tinggi, ditandai dengan nilai Jaccard yang mendekati 1. Hal ini menunjukkan bahwa anggota cluster konsisten terbentuk kembali pada proses bootstrap.
+
+Cluster 2 memiliki stabilitas lebih rendah. Pada K-Means hal ini menunjukkan batas pemisahan antar cluster yang kurang tegas, sedangkan pada Hierarchical disebabkan ukuran cluster yang sangat kecil sehingga sensitif terhadap perubahan sampel.
+
+
+Dari hasil perbandingan, K-Means dipilih sebagai metode terbaik meskipun memiliki nilai silhouette yang lebih rendah (0.591 dibanding 0.852 pada Hierarchical). Hal ini karena hasil Hierarchical Complete Linkage tidak memberikan segmentasi yang bermakna secara praktis, yaitu hanya memisahkan satu observasi dari sebagian besar data, sehingga tidak membentuk kelompok yang representatif.
+
+Sebaliknya, K-Means menghasilkan dua kelompok yang lebih seimbang dan dapat diinterpretasikan: satu kelompok dengan pola belanja lebih tinggi (41 pelanggan) dan kelompok lainnya dengan pola belanja lebih rendah (399 pelanggan).
+
+Karakteristik Cluster Terbaik
+
+```{r}
+aggregate(
+  data_clust,
+  by = list(
+    Cluster = kmeans_final$cluster
+  ),
+  mean
+)
+```
+# Kesimpulan Akhir
+
+Berdasarkan hasil analisis clustering pada data Wholesale Customers dengan 440 observasi dan 6 variabel belanja, metode K-Means dengan k = 2 dipilih sebagai metode terbaik. Meskipun metode Hierarchical Complete Linkage menghasilkan nilai silhouette yang lebih tinggi (0.852 dibanding 0.591 pada K-Means), hasil tersebut tidak memberikan segmentasi yang bermakna secara praktis karena hanya memisahkan satu observasi dari seluruh data.
+
+Sebaliknya, K-Means menghasilkan dua kelompok yang lebih representatif, yaitu 41 pelanggan dengan pola belanja tinggi terutama pada variabel Milk, Grocery, dan Detergents_Paper, serta 399 pelanggan dengan pola belanja lebih rendah dan relatif merata di seluruh kategori. Selain itu, stabilitas Cluster 1 yang tinggi (Jaccard = 0.945) menunjukkan bahwa kelompok tersebut terbentuk secara konsisten dan memiliki pola belanja yang kuat.
+
+Secara keseluruhan, K-Means memberikan hasil segmentasi yang lebih seimbang, stabil, dan mudah diinterpretasikan untuk analisis perilaku pelanggan.
